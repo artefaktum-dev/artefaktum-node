@@ -1,0 +1,35 @@
+# Runs in the public mirror (github.com/artefaktum-dev/artefaktum-node), where this package sits at
+# the repository root. Inert inside the private monorepo, which only reads workflows from
+# its own root and covers this package with .github/workflows/sdk-ts.yml instead.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions: { contents: read }
+
+concurrency: { group: "ci-${{ github.ref }}", cancel-in-progress: true }
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: { node: [20, 22] }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run smoke
+      # Are the types wrong? Checks the packed tarball resolves under node10, node16 (CJS
+      # and ESM) and bundler resolution. Once is enough; it does not depend on the Node version.
+      - if: matrix.node == 22
+        run: npm run check:types

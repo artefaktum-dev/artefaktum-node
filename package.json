@@ -1,0 +1,41 @@
+{
+  "name": "artefaktum",
+  "version": "0.1.0",
+  "description": "Client for Artefaktum: store and find the artifacts that agents hand to each other.",
+  "license": "MIT",
+  "homepage": "https://artefaktum.dev",
+  "repository": { "type": "git", "url": "git+https://github.com/artefaktum-dev/artefaktum-node.git" },
+  "bugs": { "url": "https://github.com/artefaktum-dev/artefaktum-node/issues" },
+  "keywords": ["artefaktum", "artifacts", "agents", "mcp", "n8n", "sdk"],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "engines": { "node": ">=20" },
+  "publishConfig": { "access": "public", "provenance": true },
+  "scripts": {
+    "generate": "openapi-typescript openapi.json -o src/schema.gen.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "tsup",
+    "smoke": "node scripts/smoke.mjs",
+    "check:types": "npx --yes @arethetypeswrong/cli@0.18 --pack .",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build && npm run smoke"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "openapi-typescript": "^7.13.0",
+    "tsup": "^8.5.0",
+    "typescript": "~5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

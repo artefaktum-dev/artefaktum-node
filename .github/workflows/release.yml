@@ -1,0 +1,44 @@
+# Publishes to npm from the public mirror on a `v*` tag, with a provenance attestation.
+# Provenance needs `id-token: write`, a public repository, and a `repository` field in
+# package.json that points back here -- npm rejects the attestation otherwise.
+# Needs one secret: NPM_TOKEN, a granular automation token scoped to the artefaktum package.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: { contents: read }
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions: { contents: read, id-token: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci
+      # `prepublishOnly` runs these again during `npm publish`. Kept explicit anyway: a
+      # failure here names the step that broke instead of failing inside the publish.
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run smoke
+      - run: npm run check:types
+      # A tag that disagrees with the packaged version would publish something nobody can
+      # find by the name they tagged.
+      - name: tag matches the packaged version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          declared=$(node -p "require('./package.json').version")
+          echo "tag=$tag package.json=$declared"
+          test "$tag" = "$declared"
+      # --access and --provenance also come from package.json's publishConfig; passed here
+      # too so the command reads the same as it does when run by hand.
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
