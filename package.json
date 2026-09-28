@@ -1,6 +1,6 @@
 {
   "name": "artefaktum",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Client for Artefaktum: store and find the artifacts that agents hand to each other.",
   "license": "MIT",
   "homepage": "https://artefaktum.dev",

@@ -106,7 +106,7 @@ scope). `client.whoami()`, `client.quota()`.
 
 Every failure is an `ArtefaktumError` with `code`, `message`, `status` and `request_id`
 (quote it when contacting support). Subclasses: `NotFoundError`, `UnauthorizedError`,
-`ForbiddenError`, `QuotaExceededError`, `ConflictError`, `ValidationError`, `UploadError`,
+`ForbiddenError`, `QuotaExceededError`, `RequestTooLargeError`, `ConflictError`, `ValidationError`, `UploadError`,
 `ServiceUnavailableError`, `ConnectionError`, `StorageError`, `ProcessingFailedError`,
 `ProcessingTimeoutError`, `IntegrityError`. `MissingApiKeyError` (no key at all) extends
 `Error`; a caller mistake such as `fulfil` on a non-`create` resolution throws `TypeError`.
@@ -125,6 +125,10 @@ CommonJS build, their classes are distinct.
 
 `QuotaExceededError` means a plan limit is reached: 413 for storage or file size, 429 for
 the month's API calls. `client.quota()` reports the plan, its limits and current usage.
+
+`RequestTooLargeError` (413, code `request_too_large`) means the JSON request itself is
+over 256 KB, almost always because of oversized metadata. It has nothing to do with the
+size of your file. Field limits are listed at <https://artefaktum.dev/docs/rest/#limits>.
 
 Reads are retried up to twice on 429, 502, 503, 504 and network failures, honouring
 `Retry-After`. Writes and storage transfers are never retried.

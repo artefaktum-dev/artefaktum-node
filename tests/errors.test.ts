@@ -11,6 +11,7 @@ import {
   ProcessingTimeoutError,
   QuotaExceededError,
   RELATION_TYPES,
+  RequestTooLargeError,
   ServiceUnavailableError,
   StorageError,
   UnauthorizedError,
@@ -59,6 +60,18 @@ describe("fromProblem", () => {
 
   it("falls back to the code when there is no detail or title", () => {
     expect(fromProblem(409, { code: "run_sealed" }, "Conflict").message).toBe("run_sealed");
+  });
+
+  it("maps request_too_large to its own class, not to the quota error", () => {
+    const err = fromProblem(
+      413,
+      { code: "request_too_large", status: 413, detail: "the request body exceeds the limit of 262144 bytes" },
+      "Payload Too Large",
+    );
+    expect(err).toBeInstanceOf(RequestTooLargeError);
+    expect(err).not.toBeInstanceOf(QuotaExceededError);
+    expect(err.code).toBe("request_too_large");
+    expect(err.status).toBe(413);
   });
 
   it.each([["<html>bad gateway</html>"], [null], [["x"]], [{ detail: "no code here" }]])(

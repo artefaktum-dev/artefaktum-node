@@ -72,7 +72,6 @@ export class Artifacts {
       metadata: opts.metadata ?? {},
       external_key: opts.external_key,
       expires_at: iso(opts.expires_at),
-      summary: opts.summary,
       run_id: opts.run,
       infer_lineage: opts.infer_lineage ?? true,
     };
@@ -139,7 +138,6 @@ export class Artifacts {
       filename: prepared.filename,
       content_type: prepared.content_type,
       size_bytes: prepared.size,
-      summary: opts.summary,
       run_id: opts.run,
       infer_lineage: opts.infer_lineage ?? true,
     };

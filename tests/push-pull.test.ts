@@ -122,9 +122,9 @@ describe("push", () => {
 describe("createVersion", () => {
   it("reserves a version on the existing artifact, then uploads like push", async () => {
     const { c, requests } = client([json(TICKET, 201), ok(), ref(), json(artifact())]);
-    await c.artifacts.createVersion(ARTIFACT_ID, HELLO, { filename: "hello.txt", summary: "v2", run: "run-1" });
+    await c.artifacts.createVersion(ARTIFACT_ID, HELLO, { filename: "hello.txt", run: "run-1" });
     expect(steps(requests)[0]).toBe(`POST api.test/v1/artifacts/${ARTIFACT_ID}/uploads`);
-    expect(requests[0]!.body).toEqual({ filename: "hello.txt", content_type: "text/plain", size_bytes: 5, summary: "v2", run_id: "run-1", infer_lineage: true });
+    expect(requests[0]!.body).toEqual({ filename: "hello.txt", content_type: "text/plain", size_bytes: 5, run_id: "run-1", infer_lineage: true });
     checkAgainstOpenApi(requests);
   });
 });

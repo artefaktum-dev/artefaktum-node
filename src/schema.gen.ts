@@ -280,6 +280,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/billing/portal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Portal
+         * @description Mint a portal link for the caller's tenant. Links are single-use; never cache.
+         */
+        post: operations["portal_v1_billing_portal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects": {
         parameters: {
             query?: never;
@@ -376,6 +396,40 @@ export interface paths {
         get: operations["get_usage_v1_usage_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/webhooks/clerk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clerk Webhook */
+        post: operations["clerk_webhook_v1_webhooks_clerk_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/webhooks/paddle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Paddle Webhook */
+        post: operations["paddle_webhook_v1_webhooks_paddle_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -501,7 +555,10 @@ export interface components {
         };
         /** CreateRelationRequest */
         CreateRelationRequest: {
-            /** Metadata */
+            /**
+             * Metadata
+             * @description At most 16384 bytes as compact JSON, nested at most 5 levels deep.
+             */
             metadata?: {
                 [key: string]: unknown;
             };
@@ -545,7 +602,10 @@ export interface components {
              * @default true
              */
             infer_lineage: boolean;
-            /** Metadata */
+            /**
+             * Metadata
+             * @description At most 16384 bytes as compact JSON, nested at most 5 levels deep.
+             */
             metadata?: {
                 [key: string]: unknown;
             };
@@ -558,8 +618,6 @@ export interface components {
             run_id?: string | null;
             /** Size Bytes */
             size_bytes: number;
-            /** Summary */
-            summary?: string | null;
             /** Tags */
             tags?: string[];
             /** Title */
@@ -585,8 +643,6 @@ export interface components {
             run_id?: string | null;
             /** Size Bytes */
             size_bytes: number;
-            /** Summary */
-            summary?: string | null;
         };
         /** CreatedKey */
         CreatedKey: {
@@ -640,6 +696,15 @@ export interface components {
             revoked_at: string | null;
             /** Scopes */
             scopes: string[];
+        };
+        /** PortalLinksView */
+        PortalLinksView: {
+            /** Cancel Url */
+            cancel_url: string | null;
+            /** Overview Url */
+            overview_url: string;
+            /** Update Payment Method Url */
+            update_payment_method_url: string | null;
         };
         /** ProjectList */
         ProjectList: {
@@ -726,7 +791,10 @@ export interface components {
             filename: string;
             /** Max Age Seconds */
             max_age_seconds?: number | null;
-            /** Metadata */
+            /**
+             * Metadata
+             * @description At most 16384 bytes as compact JSON, nested at most 5 levels deep.
+             */
             metadata?: {
                 [key: string]: unknown;
             };
@@ -939,8 +1007,6 @@ export interface components {
             size_bytes: number;
             /** Status */
             status: string;
-            /** Summary */
-            summary: string | null;
             /** Version Number */
             version_number: number;
         };
@@ -1627,6 +1693,37 @@ export interface operations {
             };
         };
     };
+    portal_v1_billing_portal_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PortalLinksView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_projects_v1_projects_get: {
         parameters: {
             query?: never;
@@ -1827,6 +1924,50 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clerk_webhook_v1_webhooks_clerk_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+        };
+    };
+    paddle_webhook_v1_webhooks_paddle_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
                 };
             };
         };

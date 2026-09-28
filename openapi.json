@@ -302,6 +302,7 @@
         "properties": {
           "metadata": {
             "additionalProperties": true,
+            "description": "At most 16384 bytes as compact JSON, nested at most 5 levels deep.",
             "title": "Metadata",
             "type": "object"
           },
@@ -416,6 +417,7 @@
           },
           "metadata": {
             "additionalProperties": true,
+            "description": "At most 16384 bytes as compact JSON, nested at most 5 levels deep.",
             "title": "Metadata",
             "type": "object"
           },
@@ -441,20 +443,10 @@
             "title": "Size Bytes",
             "type": "integer"
           },
-          "summary": {
-            "anyOf": [
-              {
-                "maxLength": 5000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Summary"
-          },
           "tags": {
             "items": {
+              "maxLength": 64,
+              "minLength": 1,
               "type": "string"
             },
             "maxItems": 50,
@@ -530,18 +522,6 @@
             "exclusiveMinimum": 0.0,
             "title": "Size Bytes",
             "type": "integer"
-          },
-          "summary": {
-            "anyOf": [
-              {
-                "maxLength": 5000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Summary"
           }
         },
         "required": [
@@ -695,6 +675,43 @@
           "created_at"
         ],
         "title": "KeyView",
+        "type": "object"
+      },
+      "PortalLinksView": {
+        "properties": {
+          "cancel_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cancel Url"
+          },
+          "overview_url": {
+            "title": "Overview Url",
+            "type": "string"
+          },
+          "update_payment_method_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Update Payment Method Url"
+          }
+        },
+        "required": [
+          "overview_url",
+          "cancel_url",
+          "update_payment_method_url"
+        ],
+        "title": "PortalLinksView",
         "type": "object"
       },
       "ProjectList": {
@@ -901,6 +918,7 @@
           },
           "metadata": {
             "additionalProperties": true,
+            "description": "At most 16384 bytes as compact JSON, nested at most 5 levels deep.",
             "title": "Metadata",
             "type": "object"
           },
@@ -928,6 +946,8 @@
           },
           "tags": {
             "items": {
+              "maxLength": 64,
+              "minLength": 1,
               "type": "string"
             },
             "maxItems": 50,
@@ -1116,6 +1136,8 @@
           },
           "tags_all": {
             "items": {
+              "maxLength": 64,
+              "minLength": 1,
               "type": "string"
             },
             "maxItems": 50,
@@ -1288,6 +1310,7 @@
             "anyOf": [
               {
                 "additionalProperties": true,
+                "description": "At most 16384 bytes as compact JSON, nested at most 5 levels deep.",
                 "type": "object"
               },
               {
@@ -1300,6 +1323,8 @@
             "anyOf": [
               {
                 "items": {
+                  "maxLength": 64,
+                  "minLength": 1,
                   "type": "string"
                 },
                 "maxItems": 50,
@@ -1495,17 +1520,6 @@
             "title": "Status",
             "type": "string"
           },
-          "summary": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Summary"
-          },
           "version_number": {
             "title": "Version Number",
             "type": "integer"
@@ -1519,7 +1533,6 @@
           "size_bytes",
           "etag",
           "sha256",
-          "summary",
           "status",
           "created_at"
         ],
@@ -2893,6 +2906,56 @@
         ]
       }
     },
+    "/v1/billing/portal": {
+      "post": {
+        "description": "Mint a portal link for the caller's tenant. Links are single-use; never cache.",
+        "operationId": "portal_v1_billing_portal_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalLinksView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Portal",
+        "tags": [
+          "billing"
+        ]
+      }
+    },
     "/v1/projects": {
       "get": {
         "operationId": "list_projects_v1_projects_get",
@@ -3332,6 +3395,56 @@
         "summary": "Get Usage",
         "tags": [
           "usage"
+        ]
+      }
+    },
+    "/v1/webhooks/clerk": {
+      "post": {
+        "operationId": "clerk_webhook_v1_webhooks_clerk_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Clerk Webhook V1 Webhooks Clerk Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Clerk Webhook",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/v1/webhooks/paddle": {
+      "post": {
+        "operationId": "paddle_webhook_v1_webhooks_paddle_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Paddle Webhook V1 Webhooks Paddle Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Paddle Webhook",
+        "tags": [
+          "webhooks"
         ]
       }
     }

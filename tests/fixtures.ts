@@ -14,7 +14,6 @@ export const VERSION_VIEW: Version = {
   size_bytes: 5,
   etag: '"abc"',
   sha256: HELLO_SHA256,
-  summary: null,
   status: "ready",
   created_at: "2026-09-21T10:00:00Z",
 };

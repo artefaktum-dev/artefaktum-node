@@ -49,12 +49,12 @@ const CASES: Case[] = [
     name: "artifacts.createUpload sends every field, run as run_id, a Date as ISO",
     call: (c) => c.artifacts.createUpload({
       filename: "r.pdf", content_type: "application/pdf", size_bytes: 9, title: "R", description: "d", tags: ["a", "b"], metadata: { k: 1 },
-      external_key: "reports/q3", expires_at: new Date("2026-12-31T00:00:00Z"), summary: "s", run: "run-1", infer_lineage: false,
+      external_key: "reports/q3", expires_at: new Date("2026-12-31T00:00:00Z"), run: "run-1", infer_lineage: false,
     }),
     reply: () => json(TICKET, 201), method: "POST", path: "/v1/artifacts/uploads",
     body: {
       project_id: PROJECT_ID, filename: "r.pdf", content_type: "application/pdf", size_bytes: 9, title: "R", description: "d", tags: ["a", "b"], metadata: { k: 1 },
-      external_key: "reports/q3", expires_at: "2026-12-31T00:00:00.000Z", summary: "s", run_id: "run-1", infer_lineage: false,
+      external_key: "reports/q3", expires_at: "2026-12-31T00:00:00.000Z", run_id: "run-1", infer_lineage: false,
     },
     result: TICKET,
   },
@@ -175,7 +175,16 @@ describe("every operation", () => {
 describe("openapi coverage", () => {
   // GET /health/live and GET /health/ready aren't part of the SDK surface; POST
   // /v1/artifacts/{artifact_id}/uploads is exercised by createVersion in push-pull.test.ts.
-  const ALLOWED_UNEXERCISED = new Set(["GET /health/live", "GET /health/ready", "POST /v1/artifacts/{artifact_id}/uploads"]);
+  // The billing routes are for Paddle's and Clerk's webhooks and the browser console,
+  // never for an API-key client (billing spec §4.3, §4.7).
+  const ALLOWED_UNEXERCISED = new Set([
+    "GET /health/live",
+    "GET /health/ready",
+    "POST /v1/artifacts/{artifact_id}/uploads",
+    "POST /v1/webhooks/paddle",
+    "POST /v1/webhooks/clerk",
+    "POST /v1/billing/portal",
+  ]);
 
   it("exercises every OpenAPI operation except the documented exceptions", () => {
     const expected = allOperations();

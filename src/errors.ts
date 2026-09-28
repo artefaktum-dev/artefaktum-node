@@ -45,6 +45,8 @@ export class NotFoundError extends ArtefaktumError {}
 export class UnauthorizedError extends ArtefaktumError {}
 export class ForbiddenError extends ArtefaktumError {}
 export class QuotaExceededError extends ArtefaktumError {}
+/** The request body is over the API's size limit. File bytes never count: they go straight to storage. */
+export class RequestTooLargeError extends ArtefaktumError {}
 export class ConflictError extends ArtefaktumError {}
 export class ValidationError extends ArtefaktumError {}
 export class UploadError extends ArtefaktumError {}
@@ -118,6 +120,7 @@ const BY_CODE: Record<string, ErrorClass> = {
   unauthorized: UnauthorizedError,
   insufficient_scope: ForbiddenError,
   quota_exceeded: QuotaExceededError,
+  request_too_large: RequestTooLargeError,
   artifact_not_ready: ConflictError,
   external_key_conflict: ConflictError,
   idempotency_conflict: ConflictError,

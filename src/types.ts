@@ -67,7 +67,6 @@ export interface UploadFields {
   metadata?: Record<string, unknown>;
   external_key?: string;
   expires_at?: Timestamp;
-  summary?: string;
   /** A run id; with `infer_lineage` the server links this artifact to what the run read. */
   run?: string;
   infer_lineage?: boolean;
@@ -93,7 +92,6 @@ export interface PushOptions extends UploadFields, ProjectScoped, WaitOptions {
 }
 
 export interface CreateVersionOptions extends WaitOptions {
-  summary?: string;
   run?: string;
   infer_lineage?: boolean;
   content_type?: string;
