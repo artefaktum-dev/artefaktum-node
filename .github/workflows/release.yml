@@ -1,7 +1,9 @@
 # Publishes to npm from the public mirror on a `v*` tag, with a provenance attestation.
 # Provenance needs `id-token: write`, a public repository, and a `repository` field in
 # package.json that points back here -- npm rejects the attestation otherwise.
-# Needs one secret: NPM_TOKEN, a granular automation token scoped to the artefaktum package.
+# No secret: npm trusted publishing (OIDC). npmjs.com → artefaktum → Trusted Publishers must list
+# GitHub Actions, owner artefaktum-dev, repository artefaktum-node, workflow release.yml.
+# Trusted publishing needs npm >= 11.5.1, hence the npm upgrade step.
 name: release
 
 on:
@@ -21,6 +23,7 @@ jobs:
           node-version: 22
           cache: npm
           registry-url: "https://registry.npmjs.org"
+      - run: npm install -g npm@latest
       - run: npm ci
       # `prepublishOnly` runs these again during `npm publish`. Kept explicit anyway: a
       # failure here names the step that broke instead of failing inside the publish.
@@ -40,5 +43,3 @@ jobs:
       # --access and --provenance also come from package.json's publishConfig; passed here
       # too so the command reads the same as it does when run by hand.
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
