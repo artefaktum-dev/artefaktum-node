@@ -59,7 +59,9 @@ console.log(`smoke: static graph ${[...seen].join(", ")} has no Node builtin imp
 // 2. Pack, install the tarball elsewhere, and use it from CJS and from ESM.
 const work = mkdtempSync(join(tmpdir(), "artefaktum-smoke-"));
 try {
-  const [{ filename }] = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", work], { cwd: root, encoding: "utf8" }));
+  const packed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", work], { cwd: root, encoding: "utf8" }));
+  // npm 12 prints an object keyed by package name; npm 11 and earlier print a list.
+  const { filename } = Array.isArray(packed) ? packed[0] : Object.values(packed)[0];
   writeFileSync(join(work, "package.json"), JSON.stringify({ name: "smoke", private: true }));
   execFileSync("npm", ["install", "--no-audit", "--no-fund", "--ignore-scripts", join(work, filename)], { cwd: work, stdio: "pipe" });
 
