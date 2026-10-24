@@ -68,9 +68,10 @@ export class ProcessingFailedError extends ArtefaktumError {
 }
 
 export class ProcessingTimeoutError extends ArtefaktumError {
-  readonly artifact: Artifact;
-  constructor(artifact: Artifact, timeout_ms: number) {
-    super(`artifact still ${artifact.status} after ${timeout_ms} ms`, { code: "processing_timeout" });
+  /** Undefined when the wait was for a `resolve` to stop being pending: there is no artifact yet. */
+  readonly artifact: Artifact | undefined;
+  constructor(artifact: Artifact | undefined, timeout_ms: number, message?: string) {
+    super(message ?? `artifact still ${artifact?.status} after ${timeout_ms} ms`, { code: "processing_timeout" });
     this.artifact = artifact;
   }
 }

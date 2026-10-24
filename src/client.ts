@@ -3,13 +3,13 @@
  * bodies are typed against the generated schema so a server-side change is a compile error.
  */
 import { type ClientOptions, isUuid, loadConfig } from "./config.js";
-import { NotFoundError, RELATION_TYPES, type RelationType } from "./errors.js";
-import { type Prepared, fetchBytes, loadNode, prepare, pullPlan, putToStorage, signedVersion, waitReady } from "./files.js";
+import { ArtefaktumError, NotFoundError, ProcessingTimeoutError, RELATION_TYPES, type RelationType } from "./errors.js";
+import { type Prepared, fetchBytes, loadNode, prepare, pullPlan, putToStorage, signedVersion, sleepAbortable, waitReady } from "./files.js";
 import { type Sleep, Transport } from "./transport.js";
 import type {
   AddRelationOptions, ApiKey, Artifact, ArtifactPage, ArtifactRef, CompleteUploadOptions, CreateKeyOptions, CreateRunOptions,
-  CreateUploadOptions, CreateVersionOptions, CreatedKey, Download, DownloadUrlOptions, FulfilOptions, Identity, IterAllOptions,
-  ListOptions, Project, PullOptions, PulledBytes, PushOptions, Quota, Relation, ResolveOptions, Resolution, Run, RunArtifactsOptions,
+  CreateUploadOptions, CreateVersionOptions, CreatedKey, Download, DownloadUrlOptions, FulfilOptions, GetByKeyOptions, Identity, IterAllOptions,
+  ListOptions, Project, PullByKeyOptions, PullOptions, PulledBytes, PushOptions, PushedArtifact, Quota, Relation, ResolveOptions, Resolution, Run, RunArtifactsOptions,
   Schemas, SearchOptions, SearchPage, Source, Timestamp, UpdateOptions, UploadTicket, UsageOptions, UsagePoint, Version, WaitOptions,
 } from "./types.js";
 
@@ -23,6 +23,27 @@ export interface Core {
 }
 
 const seg = encodeURIComponent;
+
+/** The reservation and signed PUT from a `create` resolution, or `TypeError`. */
+function fulfilTicket(resolution: Resolution): UploadTicket {
+  if (resolution.status !== "create" || !resolution.reservation || !resolution.upload) {
+    throw new TypeError(
+      `fulfil expects a resolution with status "create" carrying a reservation and an upload; got status ${JSON.stringify(resolution.status)}`,
+    );
+  }
+  return { artifact: resolution.reservation, upload: resolution.upload };
+}
+
+/** The descriptor fields `push` with `if_exists: "version"` must PATCH onto the existing artifact. */
+function descriptorChanges(existing: Artifact, f: { title: string; description?: string; tags?: readonly string[]; metadata?: Record<string, unknown>; expires_at?: Timestamp }): UpdateOptions | undefined {
+  const changes: UpdateOptions = {};
+  if (f.title !== existing.title) changes.title = f.title;
+  if (f.description) changes.description = f.description;
+  if (f.tags && f.tags.length > 0) changes.tags = f.tags;
+  if (f.metadata !== undefined) changes.metadata = f.metadata;
+  if (f.expires_at !== undefined) changes.expires_at = f.expires_at;
+  return Object.keys(changes).length > 0 ? changes : undefined;
+}
 
 function iso(value: Timestamp | undefined): string | undefined {
   return value instanceof Date ? value.toISOString() : value;
@@ -118,48 +139,153 @@ export class Artifacts {
    *
    * `wait: true` polls every 0.5 s and throws `ProcessingFailedError` or
    * `ProcessingTimeoutError`; `wait: false` returns after a single `get`.
+   *
+   * With `if_exists: "reuse"`, `expires_at` is applied whenever this call stored bytes (an
+   * `update` after the upload completes) and never on a hit; `infer_lineage` is not sent on
+   * that path, because `resolve` does not take it.
    */
-  async push(source: Source, opts: PushOptions): Promise<Artifact> {
-    const { wait, timeout_ms, signal, filename, content_type, ...fields } = opts;
+  async push(source: Source, opts: PushOptions): Promise<PushedArtifact> {
+    const { wait, timeout_ms, signal, filename, content_type, if_exists = "error", max_age_seconds, ...fields } = opts;
+    // Rejected before hashing or any request (intent-surface spec §6).
+    if (if_exists !== "error" && if_exists !== "version" && if_exists !== "reuse") {
+      throw new TypeError("if_exists must be 'error', 'version' or 'reuse'");
+    }
+    if (if_exists !== "error" && fields.external_key === undefined) throw new TypeError("if_exists needs external_key");
+    if (max_age_seconds !== undefined && if_exists !== "reuse") {
+      throw new TypeError("max_age_seconds only applies with if_exists 'reuse'");
+    }
     const prepared = await prepare(source, { filename, content_type });
+    const wopts = { wait, timeout_ms, signal };
+    if (if_exists === "reuse") return this.pushReuse(prepared, fields.external_key!, fields, max_age_seconds, wopts);
+    if (if_exists === "version") return this.pushVersion(prepared, fields.external_key!, fields, wopts);
     const ticket = await this.createUpload({
       ...fields,
       filename: prepared.filename,
       content_type: prepared.content_type,
       size_bytes: prepared.size,
     });
-    return this.upload(ticket, prepared, { wait, timeout_ms, signal });
+    return { ...(await this.upload(ticket, prepared, wopts)), reused: false };
+  }
+
+  /**
+   * `push` with `if_exists: "reuse"`: resolve, then hit / upload / wait (intent-surface spec
+   * §6). The wait on a `pending` answer honours `retry_after_seconds` (default 2, capped at
+   * 5) and is bounded by `timeout_ms`, counted as the sum of the sleeps so the injected
+   * `sleep` keeps tests off the clock; `timeout_ms` then bounds the ready wait again.
+   */
+  private async pushReuse(
+    prepared: Prepared,
+    external_key: string,
+    fields: Omit<PushOptions, keyof WaitOptions | "filename" | "content_type" | "if_exists" | "max_age_seconds">,
+    max_age_seconds: number | undefined,
+    wopts: WaitOptions,
+  ): Promise<PushedArtifact> {
+    const timeout_ms = wopts.timeout_ms ?? 30_000;
+    let waited = 0;
+    for (;;) {
+      const resolution = await this.resolve(external_key, {
+        project: fields.project,
+        filename: prepared.filename,
+        content_type: prepared.content_type,
+        size_bytes: prepared.size,
+        title: fields.title,
+        description: fields.description,
+        tags: fields.tags,
+        metadata: fields.metadata,
+        max_age_seconds,
+        run: fields.run,
+      });
+      if (resolution.status === "hit") {
+        if (!resolution.artifact) {
+          throw new ArtefaktumError("resolve answered hit without an artifact", { code: "invalid_response" });
+        }
+        return { ...resolution.artifact, reused: true };
+      }
+      if (resolution.status === "create") {
+        const ticket = fulfilTicket(resolution);
+        const stored = await this.upload(ticket, prepared, wopts);
+        const final = fields.expires_at !== undefined ? await this.update(stored.id, { expires_at: fields.expires_at }) : stored;
+        return { ...final, reused: false };
+      }
+      if (waited >= timeout_ms) {
+        throw new ProcessingTimeoutError(undefined, timeout_ms, `resolve stayed pending for ${timeout_ms} ms`);
+      }
+      const delay = Math.min(resolution.retry_after_seconds || 2, 5) * 1000;
+      await sleepAbortable(this.core.sleep, delay, wopts.signal);
+      waited += delay;
+    }
+  }
+
+  /**
+   * `push` with `if_exists: "version"`: a new version of the keyed artifact, else create it.
+   * Losing the create race to a concurrent writer answers `external_key_conflict`; the key
+   * now exists, so the version path is tried once more (intent-surface spec §6).
+   */
+  private async pushVersion(
+    prepared: Prepared,
+    external_key: string,
+    fields: Omit<PushOptions, keyof WaitOptions | "filename" | "content_type" | "if_exists" | "max_age_seconds">,
+    wopts: WaitOptions,
+  ): Promise<PushedArtifact> {
+    for (let attempt = 1; ; attempt++) {
+      let existing: Artifact | undefined;
+      let ticket: UploadTicket;
+      try {
+        existing = await this.getByExternalKey(external_key, { project: fields.project });
+        ticket = await this.versionTicket(existing.id, prepared, fields.run, fields.infer_lineage);
+      } catch (err) {
+        if (existing !== undefined || !(err instanceof NotFoundError)) throw err;
+        try {
+          ticket = await this.createUpload({
+            ...fields,
+            external_key,
+            filename: prepared.filename,
+            content_type: prepared.content_type,
+            size_bytes: prepared.size,
+          });
+        } catch (conflict) {
+          if (attempt === 1 && conflict instanceof ArtefaktumError && conflict.code === "external_key_conflict") continue;
+          throw conflict;
+        }
+      }
+      const artifact = await this.upload(ticket, prepared, wopts);
+      if (existing === undefined) return { ...artifact, reused: false };
+      // A new version carries no descriptor, so what the caller passed would be dropped
+      // silently; only the fields given are sent.
+      const changes = descriptorChanges(existing, fields);
+      return { ...(changes ? await this.update(artifact.id, changes) : artifact), reused: false };
+    }
+  }
+
+  private versionTicket(artifact_id: string, prepared: Prepared, run?: string, infer_lineage?: boolean): Promise<UploadTicket> {
+    const body: Schemas["CreateVersionRequest"] = {
+      filename: prepared.filename,
+      content_type: prepared.content_type,
+      size_bytes: prepared.size,
+      run_id: run,
+      infer_lineage: infer_lineage ?? true,
+    };
+    return this.core.transport.request<UploadTicket>({
+      method: "POST",
+      path: `/v1/artifacts/${seg(artifact_id)}/uploads`,
+      body,
+    });
   }
 
   /** A new version of an existing artifact: `push`'s flow over `POST /{id}/uploads`. */
   async createVersion(artifact_id: string, source: Source, opts: CreateVersionOptions = {}): Promise<Artifact> {
     const prepared = await prepare(source, { filename: opts.filename, content_type: opts.content_type });
-    const body: Schemas["CreateVersionRequest"] = {
-      filename: prepared.filename,
-      content_type: prepared.content_type,
-      size_bytes: prepared.size,
-      run_id: opts.run,
-      infer_lineage: opts.infer_lineage ?? true,
-    };
-    const ticket = await this.core.transport.request<UploadTicket>({
-      method: "POST",
-      path: `/v1/artifacts/${seg(artifact_id)}/uploads`,
-      body,
-    });
+    const ticket = await this.versionTicket(artifact_id, prepared, opts.run, opts.infer_lineage);
     return this.upload(ticket, prepared, opts);
   }
 
   /** Upload the bytes a `resolve` asked for. Throws `TypeError` unless the status is `create`. */
   async fulfil(resolution: Resolution, source: Source, opts: FulfilOptions = {}): Promise<Artifact> {
-    if (resolution.status !== "create" || !resolution.reservation || !resolution.upload) {
-      throw new TypeError(
-        `fulfil expects a resolution with status "create" carrying a reservation and an upload; got status ${JSON.stringify(resolution.status)}`,
-      );
-    }
+    const ticket = fulfilTicket(resolution);
     // The reservation already fixed the stored name and the signed PUT carries its own
     // content type, so the name here only satisfies `prepare` for nameless bytes.
     const prepared = await prepare(source, { filename: "reserved" });
-    return this.upload({ artifact: resolution.reservation, upload: resolution.upload }, prepared, opts);
+    return this.upload(ticket, prepared, opts);
   }
 
   // -- reads -----------------------------------------------------------------------------
@@ -169,11 +295,11 @@ export class Artifacts {
   }
 
   /** `key` is a path segment that may contain `/`; it is percent-encoded whole. */
-  async getByExternalKey(key: string, opts: { project?: string } = {}): Promise<Artifact> {
+  async getByExternalKey(key: string, opts: GetByKeyOptions = {}): Promise<Artifact> {
     return this.core.transport.request({
       method: "GET",
       path: `/v1/artifacts/by-external-key/${seg(key)}`,
-      query: { project_id: await this.core.projectId(opts.project) },
+      query: { project_id: await this.core.projectId(opts.project), max_age_seconds: opts.max_age_seconds },
     });
   }
 
@@ -302,6 +428,18 @@ export class Artifacts {
       version_id: version.id,
       sha256: version.sha256,
     };
+  }
+
+  /** `getByExternalKey` then `pull` (intent-surface spec §6); `max_age_seconds` older is `NotFoundError`. */
+  async pullByKey(key: string, dest: string, opts: PullByKeyOptions = {}): Promise<string> {
+    const artifact = await this.getByExternalKey(key, opts);
+    return this.pull(artifact.id, dest, opts);
+  }
+
+  /** `getByExternalKey` then `pullBytes`. */
+  async pullBytesByKey(key: string, opts: PullByKeyOptions = {}): Promise<PulledBytes> {
+    const artifact = await this.getByExternalKey(key, opts);
+    return this.pullBytes(artifact.id, opts);
   }
 
   // -- metadata and graph ----------------------------------------------------------------

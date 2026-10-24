@@ -2048,6 +2048,23 @@
             }
           },
           {
+            "in": "query",
+            "name": "max_age_seconds",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Max Age Seconds"
+            }
+          },
+          {
             "in": "header",
             "name": "authorization",
             "required": false,

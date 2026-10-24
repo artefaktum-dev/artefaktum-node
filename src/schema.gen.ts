@@ -1239,6 +1239,7 @@ export interface operations {
         parameters: {
             query: {
                 project_id: string;
+                max_age_seconds?: number | null;
             };
             header?: {
                 authorization?: string | null;

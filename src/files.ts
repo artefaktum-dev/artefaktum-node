@@ -141,6 +141,12 @@ export async function putToStorage(
 
 const realSleep: Sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** One sleep on the injected clock, cut short by `signal` (used by `push`'s pending wait). */
+export function sleepAbortable(sleep: Sleep | undefined, ms: number, signal?: AbortSignal): Promise<void> {
+  rethrowIfAborted(signal);
+  return raceAbort((sleep ?? realSleep)(ms), signal);
+}
+
 export async function waitReady(
   get: () => Promise<Artifact>,
   opts: { timeout_ms: number; interval_ms?: number; signal?: AbortSignal; sleep?: Sleep; now?: () => number },

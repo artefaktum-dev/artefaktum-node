@@ -77,18 +77,48 @@ else if (r.status === "create") await client.artifacts.fulfil(r, body);
 else await sleep((r.retry_after_seconds ?? 2) * 1000); // "pending": another producer is already making it
 ```
 
+### Reuse or replace by key
+
+```ts
+// Reuse: an artifact under this key younger than an hour is returned, nothing is uploaded.
+const a = await client.artifacts.push(body, {
+  title: "Vilnius weather", filename: "weather.json",
+  external_key: "openweather/vilnius", if_exists: "reuse", max_age_seconds: 3600,
+});
+console.log(a.reused); // true when an existing artifact came back (set by the SDK, not the API)
+
+// Replace: add a version to the artifact holding the key, or create it when the key is new.
+await client.artifacts.push(body, {
+  title: "Vilnius weather", filename: "weather.json",
+  external_key: "openweather/vilnius", if_exists: "version",
+});
+
+// Read it back by key; an artifact older than max_age_seconds is NotFoundError.
+await client.artifacts.pullByKey("openweather/vilnius", "out/", { max_age_seconds: 3600 });
+```
+
+`if_exists` is `"error"` (the default: an existing key is a `ConflictError`), `"version"` or
+`"reuse"`; both need `external_key`, and `max_age_seconds` only applies to `"reuse"` (a
+`TypeError` otherwise, before any request). With `"reuse"`, a `push` that finds another
+producer already making the artifact waits up to `timeout_ms`, then throws
+`ProcessingTimeoutError`. With `"version"`, the `title` (if it differs), `description`,
+`tags`, `metadata` and `expires_at` you pass are applied to the existing artifact after the
+new version lands.
+
 ## Downloading
 
 ```ts
 const path = await client.artifacts.pull(id, "out/");            // Node: streams to disk, verifies sha256
 const { data, filename } = await client.artifacts.pullBytes(id); // any runtime: verified bytes in memory
+await client.artifacts.pullByKey("reports/q3-churn", "out/");     // by external key, optional max_age_seconds
+const bytes = await client.artifacts.pullBytesByKey("reports/q3-churn");
 ```
 
 ## Finding
 
 ```ts
 await client.artifacts.search("emission factors", { mode: "hybrid", tags_all: ["ghg"] });
-await client.artifacts.getByExternalKey("reports/q3-churn");
+await client.artifacts.getByExternalKey("reports/q3-churn", { max_age_seconds: 3600 });
 for await (const a of client.artifacts.iterAll({ tag: "churn" })) console.log(a.title);
 ```
 
@@ -97,7 +127,8 @@ Search hides superseded artifacts by default; each hit says whether it is `super
 
 ## Everything else
 
-`client.artifacts`: `get`, `list`, `update`, `delete`, `versions`, `relations`,
+`client.artifacts`: `push`, `createVersion`, `fulfil`, `resolve`, `pull`, `pullBytes`,
+`pullByKey`, `pullBytesByKey`, `getByExternalKey`, `get`, `list`, `update`, `delete`, `versions`, `relations`,
 `addRelation`, `downloadUrl`, `createUpload`, `completeUpload`. `client.runs`: `create`,
 `seal`, `artifacts`. `client.projects.list()`. `client.keys` and `client.usage` (admin
 scope). `client.whoami()`, `client.quota()`.

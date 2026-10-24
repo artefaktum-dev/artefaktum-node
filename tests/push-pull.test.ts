@@ -84,7 +84,7 @@ describe("push", () => {
     const { c } = client([json(TICKET, 201), ok(), ref(), json(artifact({ status: "processing" }))]);
     const err = (await c.artifacts.push(HELLO, { title: "Hello", filename: "hello.txt", timeout_ms: 0 }).catch((e: unknown) => e)) as ProcessingTimeoutError;
     expect(err).toBeInstanceOf(ProcessingTimeoutError);
-    expect(err.artifact.status).toBe("processing");
+    expect(err.artifact?.status).toBe("processing");
   });
 
   it("completes nothing when storage refuses the bytes", async () => {
@@ -211,5 +211,193 @@ describe("pullBytes", () => {
   it("raises IntegrityError on a mismatch", async () => {
     const { c } = client([json(DOWNLOAD), json([VERSION_VIEW]), new Response("tampered")]);
     await expect(c.artifacts.pullBytes(ARTIFACT_ID)).rejects.toBeInstanceOf(IntegrityError);
+  });
+});
+
+// -- intent-surface spec §6: if_exists, max_age_seconds, by-key reads -----------------------
+
+const KEYED = artifact({ external_key: "k/1", title: "Old title" });
+const notFound = () => json({ type: "x", title: "nf", status: 404, detail: "no", code: "artifact_not_found" }, 404, { "content-type": "application/problem+json" });
+const keyConflict = () => json({ type: "x", title: "c", status: 409, detail: "taken", code: "external_key_conflict" }, 409, { "content-type": "application/problem+json" });
+const REUSE = { title: "Hello", filename: "hello.txt", external_key: "k/1", if_exists: "reuse" as const };
+const create: Resolution = { status: "create", reservation: TICKET.artifact, upload: UPLOAD };
+
+describe("push if_exists validation", () => {
+  it("rejects if_exists without external_key, before any request", async () => {
+    const { c, requests } = client([]);
+    await expect(c.artifacts.push(HELLO, { title: "T", filename: "f.txt", if_exists: "version" })).rejects.toThrow(new TypeError("if_exists needs external_key"));
+    expect(requests).toHaveLength(0);
+  });
+
+  it("rejects max_age_seconds unless reusing, before any request", async () => {
+    const { c, requests } = client([]);
+    await expect(c.artifacts.push(HELLO, { title: "T", filename: "f.txt", external_key: "k", max_age_seconds: 5 })).rejects.toThrow(
+      new TypeError("max_age_seconds only applies with if_exists 'reuse'"),
+    );
+    await expect(c.artifacts.push(HELLO, { title: "T", filename: "f.txt", external_key: "k", if_exists: "version", max_age_seconds: 5 })).rejects.toThrow(TypeError);
+    expect(requests).toHaveLength(0);
+  });
+
+  it("rejects an unknown if_exists, before any request", async () => {
+    const { c, requests } = client([]);
+    await expect(c.artifacts.push(HELLO, { title: "T", filename: "f.txt", external_key: "k", if_exists: "merge" as never })).rejects.toThrow(
+      new TypeError("if_exists must be 'error', 'version' or 'reuse'"),
+    );
+    expect(requests).toHaveLength(0);
+  });
+
+  it("reports reused: false on a plain push", async () => {
+    const { c } = client([json(TICKET, 201), ok(), ref(), json(artifact())]);
+    expect((await c.artifacts.push(HELLO, { title: "Hello", filename: "hello.txt" })).reused).toBe(false);
+  });
+});
+
+describe("push if_exists: reuse", () => {
+  it("returns the existing artifact with reused, uploading nothing", async () => {
+    const { c, requests } = client([json({ status: "hit", artifact: KEYED })]);
+    const out = await c.artifacts.push(HELLO, { ...REUSE, max_age_seconds: 3600 });
+    expect(out).toEqual({ ...KEYED, reused: true });
+    expect(steps(requests)).toEqual(["POST api.test/v1/artifacts/resolve"]);
+    expect(requests[0]!.body).toMatchObject({ external_key: "k/1", max_age_seconds: 3600, filename: "hello.txt", size_bytes: 5 });
+    checkAgainstOpenApi(requests);
+  });
+
+  it("fulfils a create resolution; reused is false", async () => {
+    const { c, requests } = client([json(create), ok(), ref(), json(artifact())]);
+    const out = await c.artifacts.push(HELLO, REUSE);
+    expect(out.reused).toBe(false);
+    expect(steps(requests)).toEqual([
+      "POST api.test/v1/artifacts/resolve",
+      "PUT storage.test/bucket/object",
+      `POST api.test/v1/artifacts/${ARTIFACT_ID}/versions/${VERSION_ID}/complete`,
+      `GET api.test/v1/artifacts/${ARTIFACT_ID}`,
+    ]);
+    checkAgainstOpenApi(requests);
+  });
+
+  it("PATCHes exactly expires_at after a reuse-create completes", async () => {
+    const { c, requests } = client([json(create), ok(), ref(), json(artifact()), json(artifact())]);
+    const when = new Date("2027-01-01T00:00:00Z");
+    const out = await c.artifacts.push(HELLO, { ...REUSE, expires_at: when });
+    expect(out.reused).toBe(false);
+    const last = requests.at(-1)!;
+    expect(`${last.method} ${last.url.pathname}`).toBe(`PATCH /v1/artifacts/${ARTIFACT_ID}`);
+    expect(last.body).toEqual({ expires_at: when.toISOString() });
+    expect(steps(requests).indexOf(`PATCH api.test/v1/artifacts/${ARTIFACT_ID}`)).toBeGreaterThan(
+      steps(requests).indexOf(`POST api.test/v1/artifacts/${ARTIFACT_ID}/versions/${VERSION_ID}/complete`),
+    );
+    checkAgainstOpenApi(requests);
+  });
+
+  it("issues no PATCH on a reuse hit even with expires_at", async () => {
+    const { c, requests } = client([json({ status: "hit", artifact: KEYED })]);
+    const out = await c.artifacts.push(HELLO, { ...REUSE, expires_at: new Date("2027-01-01T00:00:00Z") });
+    expect(out.reused).toBe(true);
+    expect(requests.some((r) => r.method === "PATCH")).toBe(false);
+  });
+
+  it("sleeps through pending, honouring retry_after_seconds capped at 5, then takes the hit", async () => {
+    const slept: number[] = [];
+    const fake = fakeFetch([json({ status: "pending", retry_after_seconds: 1 }), json({ status: "pending", retry_after_seconds: 60 }), json({ status: "pending" }), json({ status: "hit", artifact: KEYED })]);
+    const c = new Artefaktum({ apiKey: "afk_test_key", baseUrl: "https://api.test", project: PROJECT_ID, fetch: fake.fetch }, { sleep: async (ms) => { slept.push(ms); } });
+    const out = await c.artifacts.push(HELLO, REUSE);
+    expect(out.reused).toBe(true);
+    expect(slept).toEqual([1000, 5000, 2000]);
+    checkAgainstOpenApi(fake.requests);
+  });
+
+  it("throws ProcessingTimeoutError once the pending budget is spent", async () => {
+    const { c, requests } = client(Array.from({ length: 5 }, () => json({ status: "pending", retry_after_seconds: 2 })));
+    const err = (await c.artifacts.push(HELLO, { ...REUSE, timeout_ms: 4000 }).catch((e: unknown) => e)) as ProcessingTimeoutError;
+    expect(err).toBeInstanceOf(ProcessingTimeoutError);
+    expect(err.message).toBe("resolve stayed pending for 4000 ms");
+    expect(err.artifact).toBeUndefined();
+    expect(requests).toHaveLength(3);
+  });
+
+  it("propagates StorageError from a failed fulfilment", async () => {
+    const { c } = client([json(create), new Response("denied", { status: 403 })]);
+    await expect(c.artifacts.push(HELLO, REUSE)).rejects.toBeInstanceOf(StorageError);
+  });
+});
+
+describe("push if_exists: version", () => {
+  const VERSION_OPTS = { title: "Hello", filename: "hello.txt", external_key: "k/1", if_exists: "version" as const };
+
+  it("adds a version when the key exists, without a PATCH when nothing differs", async () => {
+    const { c, requests } = client([json(KEYED), json(TICKET, 201), ok(), ref(), json(artifact())]);
+    const out = await c.artifacts.push(HELLO, { ...VERSION_OPTS, title: "Old title" });
+    expect(out.reused).toBe(false);
+    expect(steps(requests)).toEqual([
+      "GET api.test/v1/artifacts/by-external-key/k%2F1",
+      `POST api.test/v1/artifacts/${ARTIFACT_ID}/uploads`,
+      "PUT storage.test/bucket/object",
+      `POST api.test/v1/artifacts/${ARTIFACT_ID}/versions/${VERSION_ID}/complete`,
+      `GET api.test/v1/artifacts/${ARTIFACT_ID}`,
+    ]);
+    checkAgainstOpenApi(requests);
+  });
+
+  it("applies the descriptor fields given with a PATCH afterwards", async () => {
+    const { c, requests } = client([json(KEYED), json(TICKET, 201), ok(), ref(), json(artifact()), json(artifact({ title: "Hello" }))]);
+    const out = await c.artifacts.push(HELLO, { ...VERSION_OPTS, description: "d", tags: ["a"], metadata: { m: 1 } });
+    expect(out.title).toBe("Hello");
+    const patch = requests.at(-1)!;
+    expect(`${patch.method} ${patch.url.pathname}`).toBe(`PATCH /v1/artifacts/${ARTIFACT_ID}`);
+    expect(patch.body).toEqual({ title: "Hello", description: "d", tags: ["a"], metadata: { m: 1 } });
+    checkAgainstOpenApi(requests);
+  });
+
+  it("creates with the key when it is missing", async () => {
+    const { c, requests } = client([notFound(), json(TICKET, 201), ok(), ref(), json(artifact())]);
+    const out = await c.artifacts.push(HELLO, VERSION_OPTS);
+    expect(out.reused).toBe(false);
+    expect(steps(requests)[1]).toBe("POST api.test/v1/artifacts/uploads");
+    expect(requests[1]!.body).toMatchObject({ external_key: "k/1" });
+    expect(requests.some((r) => r.method === "PATCH")).toBe(false);
+    checkAgainstOpenApi(requests);
+  });
+
+  it("retries the version path once when a concurrent writer wins the create", async () => {
+    const { c, requests } = client([notFound(), keyConflict(), json(KEYED), json(TICKET, 201), ok(), ref(), json(artifact()), json(artifact())]);
+    await c.artifacts.push(HELLO, VERSION_OPTS);
+    expect(steps(requests).slice(0, 4)).toEqual([
+      "GET api.test/v1/artifacts/by-external-key/k%2F1",
+      "POST api.test/v1/artifacts/uploads",
+      "GET api.test/v1/artifacts/by-external-key/k%2F1",
+      `POST api.test/v1/artifacts/${ARTIFACT_ID}/uploads`,
+    ]);
+  });
+
+  it("gives up after the one retry", async () => {
+    const { c, requests } = client([notFound(), keyConflict(), notFound(), keyConflict()]);
+    const err = (await c.artifacts.push(HELLO, VERSION_OPTS).catch((e: unknown) => e)) as ArtefaktumError;
+    expect(err.code).toBe("external_key_conflict");
+    expect(requests).toHaveLength(4);
+  });
+});
+
+describe("by-key reads", () => {
+  it("getByExternalKey sends max_age_seconds, and omits it when undefined", async () => {
+    const { c, requests } = client([json(KEYED), json(KEYED)]);
+    await c.artifacts.getByExternalKey("k/1", { max_age_seconds: 3600 });
+    await c.artifacts.getByExternalKey("k/1");
+    expect(requests[0]!.url.searchParams.get("max_age_seconds")).toBe("3600");
+    expect(requests[1]!.url.searchParams.has("max_age_seconds")).toBe(false);
+    checkAgainstOpenApi(requests);
+  });
+
+  it("pullByKey fetches by key then pulls, naming the file after the version", async () => {
+    const { c, requests } = client([json(KEYED), json(DOWNLOAD), json([VERSION_VIEW]), new Response(HELLO)]);
+    const out = await c.artifacts.pullByKey("k/1", dir + sep, { max_age_seconds: 60 });
+    expect(out).toBe(join(dir, "hello.txt"));
+    expect(requests[0]!.url.searchParams.get("max_age_seconds")).toBe("60");
+    expect(steps(requests)[1]).toBe(`GET api.test/v1/artifacts/${ARTIFACT_ID}/download`);
+    checkAgainstOpenApi(requests);
+  });
+
+  it("pullBytesByKey returns the verified bytes", async () => {
+    const { c } = client([json(KEYED), json(DOWNLOAD), json([VERSION_VIEW]), new Response(HELLO)]);
+    expect((await c.artifacts.pullBytesByKey("k/1")).data).toEqual(HELLO);
   });
 });

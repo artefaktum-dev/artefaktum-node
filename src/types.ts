@@ -84,7 +84,14 @@ export interface CompleteUploadOptions {
   etag?: string;
 }
 
+/** What `push` does when `external_key` is already taken (intent-surface spec §6). */
+export type IfExists = "error" | "version" | "reuse";
+
 export interface PushOptions extends UploadFields, ProjectScoped, WaitOptions {
+  /** `"error"` (default) lets the API's 409 surface; `"version"` and `"reuse"` need `external_key`. */
+  if_exists?: IfExists;
+  /** How old a reused artifact may be, in seconds. Only with `if_exists: "reuse"`. */
+  max_age_seconds?: number;
   /** Required when the source is bytes or a Blob without a name. */
   filename?: string;
   /** Default: the Blob's type, else guessed from the filename. */
@@ -151,6 +158,16 @@ export interface PullOptions {
   verify?: boolean;
   signal?: AbortSignal;
 }
+
+/** `push`'s result: `reused` is true only when an existing artifact came back from a `reuse` hit. */
+export type PushedArtifact = Artifact & { reused: boolean };
+
+export interface GetByKeyOptions extends ProjectScoped {
+  /** An artifact older than this many seconds is `NotFoundError`. */
+  max_age_seconds?: number;
+}
+
+export interface PullByKeyOptions extends PullOptions, GetByKeyOptions {}
 
 export interface PulledBytes {
   data: Uint8Array;
